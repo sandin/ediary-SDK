@@ -6,5 +6,5 @@ public interface OAuthStore {
     
     OAuthToken get(String key, String TokenType) throws OAuthStoreException;
     
-    boolean isExists(String key);
+    boolean isExists(String key, String tokenType);
 }

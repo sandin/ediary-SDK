@@ -1,5 +1,9 @@
 package eriji.com.OAuth;
 
+import java.util.HashMap;
+
+import javax.xml.crypto.dsig.SignatureMethod;
+
 import oauth.signpost.OAuth;
 import oauth.signpost.OAuthConsumer;
 import oauth.signpost.OAuthProvider;
@@ -10,6 +14,8 @@ import oauth.signpost.exception.OAuthCommunicationException;
 import oauth.signpost.exception.OAuthExpectationFailedException;
 import oauth.signpost.exception.OAuthMessageSignerException;
 import oauth.signpost.exception.OAuthNotAuthorizedException;
+import oauth.signpost.signature.OAuthMessageSigner;
+import oauth.signpost.signature.PlainTextMessageSigner;
 
 import org.apache.http.HttpRequest;
 import org.apache.log4j.Logger;
@@ -46,11 +52,12 @@ public class OAuthClient {
                        OAuthStore store)
     {
         mStore = store;
-        mConsumer = new DefaultOAuthConsumer(consumer_key, consumer_secret);
+        mConsumer = new CommonsHttpOAuthConsumer(consumer_key, consumer_secret);
         mProvider = new DefaultOAuthProvider(requestTokenEndpointUrl, 
                                              accessTokenEndpointUrl,
                                              authorizationWebsiteUrl);
-        //mConsumer.setTokenWithSecret(ACCESS_TOKEN, TOKEN_SECRET);
+        // FIXME: 因为服务器段的HMAC_SHA1签名方式有BUG, 但是暂时使用PlainText方式签名
+        mConsumer.setMessageSigner(new PlainTextMessageSigner());
     }
     
     /**
@@ -127,15 +134,36 @@ public class OAuthClient {
         mStore = store;
     }
 
+    /**
+     * 储存request token
+     * 
+     * @throws OAuthStoreException
+     */
     public void storeRequestToken() throws OAuthStoreException {
         mStore.store(mConsumer.getConsumerKey(), mRequestToken);
     }
     
+    /**
+     * 储存access token
+     * 
+     * @throws OAuthStoreException
+     */
     public void storeAccessToken() throws OAuthStoreException {
         mStore.store(mConsumer.getConsumerKey(), mAccessToken);
         // TODO: delete request token
     }
     
+    /**
+     * 取得储存器中的request token
+     * 
+     * @return request token or NULL
+     * @throws OAuthStoreException
+     * @throws OAuthClientException
+     * @throws OAuthMessageSignerException
+     * @throws OAuthNotAuthorizedException
+     * @throws OAuthExpectationFailedException
+     * @throws OAuthCommunicationException
+     */
     public OAuthToken getRequestToken() throws OAuthStoreException, OAuthClientException, OAuthMessageSignerException, OAuthNotAuthorizedException, OAuthExpectationFailedException, OAuthCommunicationException {
         String key = mConsumer.getConsumerKey();
         if (mRequestToken != null) {
@@ -145,6 +173,17 @@ public class OAuthClient {
         }
     }
     
+    /**
+     * 取得储存中的access token 
+     * 
+     * @return access token or NULL
+     * @throws OAuthStoreException
+     * @throws OAuthClientException
+     * @throws OAuthMessageSignerException
+     * @throws OAuthNotAuthorizedException
+     * @throws OAuthExpectationFailedException
+     * @throws OAuthCommunicationException
+     */
     public OAuthToken getAccessToken() throws OAuthStoreException, OAuthClientException, OAuthMessageSignerException, OAuthNotAuthorizedException, OAuthExpectationFailedException, OAuthCommunicationException {
         String key = mConsumer.getConsumerKey();
         if (mAccessToken != null) {
@@ -154,6 +193,12 @@ public class OAuthClient {
         }
     }
     
+    /**
+     * 给HttpRequest加入OAuth认证信息
+     * 
+     * @param request HTTP请求 
+     * @throws OAuthClientException
+     */
     public void signRequest(HttpRequest request) throws OAuthClientException {
         try {
             OAuthToken accessToken = getAccessToken();
@@ -173,7 +218,15 @@ public class OAuthClient {
         } catch (Exception e) {
             throw new OAuthClientException("Cann't sign request: " + e.getMessage(), e);
         }
-            
+    }
+    
+    /**
+     * 快速检查储存器已有access token
+     * 
+     * @return
+     */
+    public boolean hasAccessToken() {
+        return mStore.isExists(mConsumer.getConsumerKey(), OAuthToken.ACCESSS_TOKEN);
     }
     
 }

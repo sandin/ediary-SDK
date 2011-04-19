@@ -1,9 +1,7 @@
 package com.ch_linghu.fanfoudroid.http;
 
-import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -12,7 +10,6 @@ import java.util.ArrayList;
 
 import javax.net.ssl.SSLHandshakeException;
 
-import org.apache.http.Header;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpEntityEnclosingRequest;
 import org.apache.http.HttpHost;
@@ -34,8 +31,6 @@ import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.client.protocol.ClientContext;
-import org.apache.http.conn.ClientConnectionManager;
-import org.apache.http.conn.params.ConnManagerParams;
 import org.apache.http.conn.params.ConnRoutePNames;
 import org.apache.http.conn.scheme.PlainSocketFactory;
 import org.apache.http.conn.scheme.Scheme;
@@ -52,7 +47,7 @@ import org.apache.http.message.BasicNameValuePair;
 import org.apache.http.params.BasicHttpParams;
 import org.apache.http.params.HttpConnectionParams;
 import org.apache.http.params.HttpParams;
-import org.apache.http.params.HttpProtocolParams;
+import org.apache.http.params.HttpProtocolParamBean;
 import org.apache.http.protocol.BasicHttpContext;
 import org.apache.http.protocol.ExecutionContext;
 import org.apache.http.protocol.HTTP;
@@ -62,6 +57,7 @@ import org.apache.log4j.Logger;
 import eriji.com.OAuth.OAuthClient;
 import eriji.com.OAuth.OAuthClientException;
 import eriji.com.OAuth.OAuthFileStore;
+import eriji.com.OAuth.OAuthStore;
 import eriji.com.SDK.API;
 import eriji.com.SDK.Configuration;
 
@@ -104,10 +100,11 @@ public class HttpClient {
     
     public static final int RETRIEVE_LIMIT = 20;
     public static final int RETRIED_TIME = 3;
+    public static final int MAX_RETRY = 0;
 
     private static final String SERVER_HOST = "api.fanfou.com";
 
-    private DefaultHttpClient mClient;
+    private DefaultHttpClient mHttpClient;
     private AuthScope mAuthScope;
     private BasicHttpContext localcontext;
 
@@ -122,8 +119,8 @@ public class HttpClient {
     private static boolean isAuthenticationEnabled = false;
 
     public HttpClient() {
-        prepareHttpClient();
-        setOAuthConsumer(null, null);
+        mHttpClient = setupHttpClient();
+        setOAuthConsumer(null, null, null);
     }
 
     /**
@@ -163,13 +160,14 @@ public class HttpClient {
      * @param consumerSecret Consumer Secret
      * @since Weibo4J 2.0.0
      */
-    public void setOAuthConsumer(String consumerKey, String consumerSecret) {
+    public void setOAuthConsumer(String consumerKey, String consumerSecret, OAuthStore store) {
         consumerKey = Configuration.getOAuthConsumerKey(consumerKey);
         consumerSecret = Configuration.getOAuthConsumerSecret(consumerSecret);
+        store = (null != store) ? store : new OAuthFileStore("/tmp/");
         if (null != consumerKey && null != consumerSecret
-                && 0 != consumerKey.length() && 0 != consumerSecret.length()) {
+            && 0 != consumerKey.length() && 0 != consumerSecret.length()) {
             mOAuthClient = new OAuthClient(consumerKey, consumerSecret,
-                                           mOAuthBaseUrl, new OAuthFileStore("/tmp"));
+                                           mOAuthBaseUrl, store);
             isAuthenticationEnabled = true;
         } else {
             logger.error("Cann't setup OAuth, consumer key or consumer secret is missing.");
@@ -183,11 +181,11 @@ public class HttpClient {
      */
     public void setProxy(String host, int port, String scheme) {
         HttpHost proxy = new HttpHost(host, port, scheme);  
-        mClient.getParams().setParameter(ConnRoutePNames.DEFAULT_PROXY, proxy);
+        mHttpClient.getParams().setParameter(ConnRoutePNames.DEFAULT_PROXY, proxy);
     }
     
     public void removeProxy() {
-        mClient.getParams().removeParameter(ConnRoutePNames.DEFAULT_PROXY);
+        mHttpClient.getParams().removeParameter(ConnRoutePNames.DEFAULT_PROXY);
     }
     
     /**
@@ -196,27 +194,31 @@ public class HttpClient {
      * Use ThreadSafeClientConnManager.
      * 
      */
-    private void prepareHttpClient() {
-
-        // Create and initialize HTTP parameters
+    private DefaultHttpClient setupHttpClient() {
         HttpParams params = new BasicHttpParams();
-        ConnManagerParams.setMaxTotalConnections(params, 10);
-        HttpProtocolParams.setVersion(params, HttpVersion.HTTP_1_1);
-
-        // Create and initialize scheme registry
+        HttpProtocolParamBean paramsBean = new HttpProtocolParamBean(params);
+        paramsBean.setVersion(HttpVersion.HTTP_1_1);
+        paramsBean.setContentCharset("UTF-8");
+        paramsBean.setUseExpectContinue(true);
+        
         SchemeRegistry schemeRegistry = new SchemeRegistry();
-        schemeRegistry.register(new Scheme("http", PlainSocketFactory
-                .getSocketFactory(), 80));
-        schemeRegistry.register(new Scheme("https", SSLSocketFactory
-                .getSocketFactory(), 443));
-
-        // Create an HttpClient with the ThreadSafeClientConnManager.
-        ClientConnectionManager cm = new ThreadSafeClientConnManager(params,
-                schemeRegistry);
-        mClient = new DefaultHttpClient(cm, params);
-
-        // TODO: need to release this connection in httpRequest()
-        // cm.releaseConnection(conn, validDuration, timeUnit);
+        schemeRegistry.register(
+                 new Scheme("http", 80, PlainSocketFactory.getSocketFactory()));
+        schemeRegistry.register(
+                 new Scheme("https", 443, SSLSocketFactory.getSocketFactory()));
+        
+        ThreadSafeClientConnManager cm = new ThreadSafeClientConnManager(schemeRegistry);
+        cm.setMaxTotal(200); // Increase max total connection to 200
+        cm.setDefaultMaxPerRoute(20); // Increase default max connection per route to 20
+        
+        DefaultHttpClient httpClient = new DefaultHttpClient(cm, params);
+        httpClient.setHttpRequestRetryHandler(myRetryHandler);
+        
+        return httpClient;
+    }
+    
+    public void shutdownHttpClient() {
+        mHttpClient.getConnectionManager().shutdown();
     }
     
     
@@ -230,7 +232,7 @@ public class HttpClient {
         mAuthScope = new AuthScope(SERVER_HOST, AuthScope.ANY_PORT);
 
         // mClient.setAuthSchemes(authRegistry);
-        mClient.setCredentialsProvider(new BasicCredentialsProvider());
+        mHttpClient.setCredentialsProvider(new BasicCredentialsProvider());
 
         // Generate BASIC scheme object and stick it to the local
         // execution context
@@ -238,7 +240,7 @@ public class HttpClient {
         localcontext.setAttribute("preemptive-auth", basicScheme);
 
         // first request interceptor
-        mClient.addRequestInterceptor(preemptiveAuth, 0);
+        mHttpClient.addRequestInterceptor(preemptiveAuth, 0);
     }
     
     /**
@@ -276,7 +278,7 @@ public class HttpClient {
     public void setCredentials(String username, String password) {
         mUserId = username;
         mPassword = password;
-        mClient.getCredentialsProvider().setCredentials(mAuthScope,
+        mHttpClient.getCredentialsProvider().setCredentials(mAuthScope,
                 new UsernamePasswordCredentials(username, password));
         isAuthenticationEnabled = true;
     }
@@ -398,7 +400,7 @@ public class HttpClient {
             if (authenticated) {
                 mOAuthClient.signRequest(method);
             }
-            response = mClient.execute(method,localcontext);
+            response = mHttpClient.execute(method,localcontext);
             res = new Response(response);
         } catch (OAuthClientException e) {
             logger.error(e.getMessage(), e);
@@ -414,7 +416,6 @@ public class HttpClient {
             int statusCode = response.getStatusLine().getStatusCode();
             // It will throw a weiboException while status code is not 200
             HandleResponseStatusCode(statusCode, res);
-            logResponseForDebug(method, response, statusCode);
         } else {
             logger.error( "response is null");
         }
@@ -485,7 +486,7 @@ public class HttpClient {
                 CONNECTION_TIMEOUT_MS);
         HttpConnectionParams
                 .setSoTimeout(method.getParams(), SOCKET_TIMEOUT_MS);
-        mClient.setHttpRequestRetryHandler(requestRetryHandler);
+        //mClient.setHttpRequestRetryHandler(requestRetryHandler);
         method.addHeader("Accept-Encoding", "gzip, deflate");
     }
 
@@ -509,9 +510,6 @@ public class HttpClient {
             ArrayList<BasicNameValuePair> postParams) throws HttpException {
         HttpUriRequest method;
 
-        log("----------------- HTTP Request Start ----------------------");
-        log("[Request]");
-        
         /*
         Credentials c = mClient.getCredentialsProvider().getCredentials(mAuthScope);
         log("BasicAuth username : " + c.getUserPrincipal().getName());
@@ -527,6 +525,8 @@ public class HttpClient {
             // http://groups.google.com/group/twitter-development-talk/browse_thread/thread/e178b1d3d63d8e3b
             post.getParams().setBooleanParameter(
                     "http.protocol.expect-continue", false);
+            
+            post.addHeader("Content-type", "application/x-www-form-urlencoded");
 
             try {
                 HttpEntity entity = null;
@@ -541,7 +541,6 @@ public class HttpClient {
                 throw new HttpException(ioe.getMessage(), ioe);
             }
 
-            logPostForDebug(postParams, post, file);
             method = post;
         } else if (httpMethod.equalsIgnoreCase(HttpDelete.METHOD_NAME)) {
             method = new HttpDelete(uri);
@@ -657,65 +656,6 @@ public class HttpClient {
         }
     }
 
-    // ignore me, it's only for debug
-    private void logPostForDebug(ArrayList<BasicNameValuePair> postParams,
-            HttpPost post, File file) {
-        // log post data
-        if (DEBUG) {
-            if (postParams != null) {
-                log("POST Params : " + postParams.toString());
-
-                try {
-                    HttpEntity entity = post.getEntity();
-                    if (null == file) {
-                        BufferedReader in = new BufferedReader(
-                                new InputStreamReader(entity.getContent()));
-                        String line;
-                        while ((line = in.readLine()) != null) {
-                            log("POST Entity : " + line);
-                        }
-                    } else {
-                        log("POST File : " + file.getParent() + "/"
-                                + file.getName());
-                    }
-                } catch (IOException ioe) {
-                    logger.error( ioe.getMessage());
-                }
-            }
-            if (file != null) {
-
-            }
-
-        }
-    }
-
-    // ignore me, it's only for debug
-    private void logResponseForDebug(HttpUriRequest method,
-            HttpResponse response, int statusCode) {
-        if (DEBUG) {
-
-            // TODO: request headers is null
-            // log request URI and header
-            log(method.getMethod() + " " + method.getURI() + " "
-                    + method.getProtocolVersion());
-            Header[] rHeaders = method.getAllHeaders();
-            for (Header h : rHeaders) {
-                log(h.getName() + " : " + h.getValue());
-            }
-
-            // log response header
-            log("[Response]");
-            Header[] headers = response.getAllHeaders();
-            for (Header h : headers) {
-                log(h.getName() + " : " + h.getValue());
-            }
-
-            // log responseContent
-            log("StatusCode : " + statusCode);
-            log("----------------- HTTP Request END ----------------------");
-        }
-    }
-
     public static String encode(String value) throws HttpException {
         try {
             return URLEncoder.encode(value, HTTP.UTF_8);
@@ -743,15 +683,13 @@ public class HttpClient {
         return buf.toString();
     }
 
-    /**
-     * 异常自动恢复处理, 使用HttpRequestRetryHandler接口实现请求的异常恢复
-     */
-    private static HttpRequestRetryHandler requestRetryHandler = new HttpRequestRetryHandler() {
-        // 自定义的恢复策略
-        public boolean retryRequest(IOException exception, int executionCount,
+    HttpRequestRetryHandler myRetryHandler = new HttpRequestRetryHandler() {
+
+        public boolean retryRequest(
+                IOException exception, 
+                int executionCount,
                 HttpContext context) {
-            // 设置恢复策略，在发生异常时候将自动重试N次
-            if (executionCount >= RETRIED_TIME) {
+            if (executionCount >= MAX_RETRY) { 
                 // Do not retry if over max retry count
                 return false;
             }
@@ -763,15 +701,17 @@ public class HttpClient {
                 // Do not retry on SSL handshake exception
                 return false;
             }
-            HttpRequest request = (HttpRequest) context
-                    .getAttribute(ExecutionContext.HTTP_REQUEST);
-            boolean idempotent = (request instanceof HttpEntityEnclosingRequest);
-            if (!idempotent) {
-                // Retry if the request is considered idempotent
+            HttpRequest request = (HttpRequest) context.getAttribute(
+                    ExecutionContext.HTTP_REQUEST);
+            boolean idempotent = !(request instanceof HttpEntityEnclosingRequest); 
+            if (idempotent) {
+                // Retry if the request is considered idempotent 
                 return true;
             }
             return false;
         }
+
     };
+
 
 }

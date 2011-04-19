@@ -36,7 +36,7 @@ public class OAuthFileStore implements OAuthStore {
             p.setProperty(SECRET_KEY, token.getTokenSecret());
 
             FileWriter fw = new FileWriter(file);
-            p.store(fw, key + "'s Access token");
+            p.store(fw, key + "'s " +  token.getTokenType() );
             fw.close();
             logger.info("Store " + token.getTokenType() + ": " + token + " into " + file);
         } catch (IOException ioe) {
@@ -66,9 +66,9 @@ public class OAuthFileStore implements OAuthStore {
     }
 
     @Override
-    public boolean isExists(String key) {
-        // TODO Auto-generated method stub
-        return false;
+    public boolean isExists(String key, String tokenType) {
+        File file = new File(mCacheDir + "/" + key + "_" + tokenType);
+        return file.exists();
     }
 
 }
