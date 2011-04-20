@@ -525,8 +525,6 @@ public class HttpClient {
             // http://groups.google.com/group/twitter-development-talk/browse_thread/thread/e178b1d3d63d8e3b
             post.getParams().setBooleanParameter(
                     "http.protocol.expect-continue", false);
-            
-            post.addHeader("Content-type", "application/x-www-form-urlencoded");
 
             try {
                 HttpEntity entity = null;

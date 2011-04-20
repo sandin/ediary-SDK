@@ -289,6 +289,22 @@ public class API extends APISupport {
     }
     
     /**
+     * 更新一篇日记(只有超级客户端可用, 代理更新指定用户日记)
+     * 
+     * @param title 日记标题
+     * @param content 日记内容
+     * @return
+     * @throws HttpException
+     */
+    public Response updateDiary(String user_email, String title, String content) throws HttpException {
+        return http.post(getBaseURL() + "diarys", createParams(
+                    new BasicNameValuePair("title", title),
+                    new BasicNameValuePair("content", content),
+                    new BasicNameValuePair("email", user_email)
+                    ), true);
+    }
+    
+    /**
      * 获取一篇日记
      * 
      * @param diary_id 日记ID

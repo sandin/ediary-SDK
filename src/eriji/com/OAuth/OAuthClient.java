@@ -206,10 +206,10 @@ public class OAuthClient {
             if (null != accessToken) {
                 logger.debug("Find access token : " + accessToken);
             
-                OAuthConsumer consumer = new CommonsHttpOAuthConsumer(mConsumer.getConsumerKey(),
-                    mConsumer.getConsumerSecret());
-                consumer.setTokenWithSecret(accessToken.getToken(), accessToken.getTokenSecret());
-                consumer.sign(request);
+               // OAuthConsumer consumer = new CommonsHttpOAuthConsumer(mConsumer.getConsumerKey(),
+               //     mConsumer.getConsumerSecret());
+                mConsumer.setTokenWithSecret(accessToken.getToken(), accessToken.getTokenSecret());
+                mConsumer.sign(request);
             } else {
                 logger.error("Don't has a access token yet.");
                 String authUrl = retrieveRequestToken();
